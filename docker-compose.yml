@@ -1,0 +1,60 @@
+version: '3.3'
+
+services:
+  client:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - frontend
+
+  mongo:
+    image: mongo
+    container_name: mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: examplepassword
+      MONGO_INITDB_DATABASE: flaskdb
+      MONGOB_DATA_DIR: /data/db
+      MONGODB_LOG_DIR: /dev/null
+    networks:
+      - backend
+    volumes:
+      - mongo-data:/data/db
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: gunicorn --bind 0.0.0.0:5000 app:app
+    ports:
+      - "5000:5000"
+    environment:
+      MONGO_DATABASE: flaskdb
+      MONGO_HOSTNAME: mongo
+      MONGO_USERNAME: root
+      MONGO_PASSWORD: examplepassword
+    volumes:
+      - appdata:/var/www/
+    networks:
+      - backend
+      - frontend
+
+networks:
+  backend:
+    driver: bridge
+  frontend:
+    driver: bridge
+
+volumes:
+  mongo-data:
+    driver: local
+  appdata:
+    driver: local
