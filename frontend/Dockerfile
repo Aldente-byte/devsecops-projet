@@ -1,18 +1,19 @@
 FROM node:16-alpine
+# Use an official Node.js runtime as a parent image
 
-# Create app directory
+# Create and set app as working directory
 WORKDIR /app
 
-# Install yarn (keep using yarn as instructor requested) and install dependencies
-# Copy package files first to leverage Docker cache
+# Copy package files first before all code
 COPY package.json package-lock.json yarn.lock* ./
+# Install yarn globally with dependencies
 RUN npm install -g yarn && yarn install --frozen-lockfile || yarn install
 
-# Copy app source
+# Copy all source code into /app
 COPY . .
 
-# Keep the global serve installation (if you need to serve a production build)
+# Global serve installation
 RUN yarn global add serve
 
-# Start the CRA development server
+# Start React on 3000
 CMD ["yarn", "start"]
