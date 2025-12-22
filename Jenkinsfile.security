@@ -1,0 +1,193 @@
+pipeline {
+    agent any
+    
+    environment {
+        DOCKER_API_VERSION = '1.43'
+        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials')
+        DOCKERHUB_USERNAME = 'aldente33535'
+        BACKEND_IMAGE = "${DOCKERHUB_USERNAME}/todo-backend"
+        FRONTEND_IMAGE = "${DOCKERHUB_USERNAME}/todo-frontend"
+    }
+    
+    stages {
+        stage('Checkout Code') {
+            steps {
+                echo '📥 Pulling code from GitHub...'
+                checkout scm
+            }
+        }
+        
+        // ========================================
+        // SECURITY STAGE 1: Secret Scanning
+        // ========================================
+        stage('Secret Scanning') {
+            steps {
+                echo '🔐 Scanning for hardcoded secrets (passwords, API keys, tokens)...'
+                script {
+                    // Uses GitLeaks to find secrets in code
+                    sh '''
+                        docker run --rm \
+                        -v $(pwd):/path \
+                        zricethezav/gitleaks:latest detect \
+                        --source /path \
+                        --no-git \
+                        --verbose \
+                        --report-path /path/gitleaks-report.json || true
+                    '''
+                }
+                echo '✅ Secret scan complete. Check gitleaks-report.json for details.'
+            }
+        }
+        
+        stage('Build Backend Image') {
+            steps {
+                echo '🔨 Building Backend Docker image...'
+                script {
+                    dir('backend') {
+                        sh 'docker build -t ${BACKEND_IMAGE}:latest -t ${BACKEND_IMAGE}:${BUILD_NUMBER} .'
+                    }
+                }
+            }
+        }
+        
+        stage('Build Frontend Image') {
+            steps {
+                echo '🔨 Building Frontend Docker image...'
+                script {
+                    dir('frontend') {
+                        sh 'docker build -t ${FRONTEND_IMAGE}:latest -t ${FRONTEND_IMAGE}:${BUILD_NUMBER} .'
+                    }
+                }
+            }
+        }
+        
+        // ========================================
+        // SECURITY STAGE 2: Container Vulnerability Scanning
+        // ========================================
+        stage('Security Scan - Backend Image') {
+            steps {
+                echo '🔍 Scanning Backend Docker image for vulnerabilities...'
+                script {
+                    // Trivy scans Docker images for known CVEs (Common Vulnerabilities and Exposures)
+                    sh '''
+                        docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest image \
+                        --severity HIGH,CRITICAL \
+                        --format json \
+                        --output backend-trivy-report.json \
+                        ${BACKEND_IMAGE}:latest || true
+                    '''
+                }
+                echo '✅ Backend image scan complete'
+            }
+        }
+        
+        stage('Security Scan - Frontend Image') {
+            steps {
+                echo '🔍 Scanning Frontend Docker image for vulnerabilities...'
+                script {
+                    sh '''
+                        docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        aquasec/trivy:latest image \
+                        --severity HIGH,CRITICAL \
+                        --format json \
+                        --output frontend-trivy-report.json \
+                        ${FRONTEND_IMAGE}:latest || true
+                    '''
+                }
+                echo '✅ Frontend image scan complete'
+            }
+        }
+        
+        // ========================================
+        // SECURITY STAGE 3: Generate Security Report
+        // ========================================
+        stage('Generate Security Summary') {
+            steps {
+                echo '📊 Generating security summary...'
+                script {
+                    sh '''
+                        echo "==================================" > security-summary.txt
+                        echo "   SECURITY SCAN SUMMARY" >> security-summary.txt
+                        echo "==================================" >> security-summary.txt
+                        echo "" >> security-summary.txt
+                        echo "Build Number: ${BUILD_NUMBER}" >> security-summary.txt
+                        echo "Date: $(date)" >> security-summary.txt
+                        echo "" >> security-summary.txt
+                        
+                        # Count vulnerabilities if reports exist
+                        if [ -f backend-trivy-report.json ]; then
+                            echo "Backend Image Vulnerabilities:" >> security-summary.txt
+                            echo "  - Report: backend-trivy-report.json" >> security-summary.txt
+                        fi
+                        
+                        if [ -f frontend-trivy-report.json ]; then
+                            echo "Frontend Image Vulnerabilities:" >> security-summary.txt
+                            echo "  - Report: frontend-trivy-report.json" >> security-summary.txt
+                        fi
+                        
+                        if [ -f gitleaks-report.json ]; then
+                            echo "Secret Scan:" >> security-summary.txt
+                            echo "  - Report: gitleaks-report.json" >> security-summary.txt
+                        fi
+                        
+                        echo "" >> security-summary.txt
+                        echo "==================================" >> security-summary.txt
+                        cat security-summary.txt
+                    '''
+                }
+            }
+        }
+        
+        stage('Login to Docker Hub') {
+            steps {
+                echo '🔐 Logging into Docker Hub...'
+                sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
+            }
+        }
+        
+        stage('Push Images to Docker Hub') {
+            steps {
+                echo '🚀 Pushing images to Docker Hub...'
+                sh '''
+                    docker push ${BACKEND_IMAGE}:latest
+                    docker push ${BACKEND_IMAGE}:${BUILD_NUMBER}
+                    docker push ${FRONTEND_IMAGE}:latest
+                    docker push ${FRONTEND_IMAGE}:${BUILD_NUMBER}
+                '''
+            }
+        }
+        
+        stage('Cleanup Local Images') {
+            steps {
+                echo '🧹 Cleaning up local Docker images...'
+                sh '''
+                    docker rmi ${BACKEND_IMAGE}:${BUILD_NUMBER} || true
+                    docker rmi ${FRONTEND_IMAGE}:${BUILD_NUMBER} || true
+                '''
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo '🔒 Logging out from Docker Hub...'
+            sh 'docker logout || true'
+            
+            // Archive security reports
+            archiveArtifacts artifacts: '*-report.json, security-summary.txt', 
+                           allowEmptyArchive: true,
+                           fingerprint: true
+        }
+        success {
+            echo '✅ Pipeline completed successfully!'
+            echo '📦 Images available at Docker Hub'
+            echo '🔒 Security reports archived'
+        }
+        failure {
+            echo '❌ Pipeline failed! Check the logs above.'
+        }
+    }
+}
