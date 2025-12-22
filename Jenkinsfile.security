@@ -176,8 +176,13 @@ pipeline {
             echo '🔒 Logging out from Docker Hub...'
             sh 'docker logout || true'
             
-            // Archive security reports
-            archiveArtifacts artifacts: '*-report.json, security-summary.txt', 
+            // Archive all security reports
+            archiveArtifacts artifacts: '''
+                            **/*trivy*.json
+                            **/*gitleaks*.json
+                            **/*-report.json
+                            security-summary.txt
+                        ''',
                            allowEmptyArchive: true,
                            fingerprint: true
         }
