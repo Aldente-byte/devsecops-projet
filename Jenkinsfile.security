@@ -175,14 +175,13 @@ pipeline {
         always {
             echo '🔒 Logging out from Docker Hub...'
             sh 'docker logout || true'
+
+            //list files to debug
+            sh 'ls -la'
+            sh 'find . -name "*report.json" -o -name "security-summary.txt"'
             
-            // Archive all security reports
-            archiveArtifacts artifacts: '''
-                            **/*trivy*.json
-                            **/*gitleaks*.json
-                            **/*-report.json
-                            security-summary.txt
-                        ''',
+            // Archive security reports with explicit paths
+            archiveArtifacts artifacts: '*-report.json, security-summary.txt',
                            allowEmptyArchive: true,
                            fingerprint: true
         }
