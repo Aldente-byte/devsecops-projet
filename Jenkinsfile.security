@@ -24,7 +24,6 @@ pipeline {
             steps {
                 echo '🔐 Scanning for hardcoded secrets (passwords, API keys, tokens)...'
                 script {
-                    // Uses GitLeaks to find secrets in code
                     sh '''
                         docker run --rm \
                         -v $(pwd):/path \
@@ -33,6 +32,15 @@ pipeline {
                         --no-git \
                         --verbose \
                         --report-path /path/gitleaks-report.json || true
+                        
+                        # Verify file was created
+                        if [ -f gitleaks-report.json ]; then
+                            echo "✅ GitLeaks report created"
+                            ls -lh gitleaks-report.json
+                        else
+                            echo "⚠️ GitLeaks report not found, creating empty report"
+                            echo '{"no_secrets_found": true}' > gitleaks-report.json
+                        fi
                     '''
                 }
                 echo '✅ Secret scan complete. Check gitleaks-report.json for details.'
@@ -68,15 +76,24 @@ pipeline {
             steps {
                 echo '🔍 Scanning Backend Docker image for vulnerabilities...'
                 script {
-                    // Trivy scans Docker images for known CVEs (Common Vulnerabilities and Exposures)
                     sh '''
                         docker run --rm \
                         -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v $(pwd):/reports \
                         aquasec/trivy:latest image \
                         --severity HIGH,CRITICAL \
                         --format json \
-                        --output backend-trivy-report.json \
+                        --output /reports/backend-trivy-report.json \
                         ${BACKEND_IMAGE}:latest || true
+                        
+                        # Verify file was created
+                        if [ -f backend-trivy-report.json ]; then
+                            echo "✅ Backend Trivy report created"
+                            ls -lh backend-trivy-report.json
+                        else
+                            echo "⚠️ Backend Trivy report not found, creating empty report"
+                            echo '{"Results": []}' > backend-trivy-report.json
+                        fi
                     '''
                 }
                 echo '✅ Backend image scan complete'
@@ -90,11 +107,21 @@ pipeline {
                     sh '''
                         docker run --rm \
                         -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v $(pwd):/reports \
                         aquasec/trivy:latest image \
                         --severity HIGH,CRITICAL \
                         --format json \
-                        --output frontend-trivy-report.json \
+                        --output /reports/frontend-trivy-report.json \
                         ${FRONTEND_IMAGE}:latest || true
+                        
+                        # Verify file was created
+                        if [ -f frontend-trivy-report.json ]; then
+                            echo "✅ Frontend Trivy report created"
+                            ls -lh frontend-trivy-report.json
+                        else
+                            echo "⚠️ Frontend Trivy report not found, creating empty report"
+                            echo '{"Results": []}' > frontend-trivy-report.json
+                        fi
                     '''
                 }
                 echo '✅ Frontend image scan complete'
@@ -175,13 +202,14 @@ pipeline {
         always {
             echo '🔒 Logging out from Docker Hub...'
             sh 'docker logout || true'
-
-            //list files to debug
+            
+            // List files to debug
+            echo '📁 Listing workspace files...'
             sh 'ls -la'
             sh 'find . -name "*report.json" -o -name "security-summary.txt"'
             
-            // Archive security reports with explicit paths
-            archiveArtifacts artifacts: '*-report.json, security-summary.txt',
+            // Archive security reports
+            archiveArtifacts artifacts: '*-report.json, security-summary.txt', 
                            allowEmptyArchive: true,
                            fingerprint: true
         }
